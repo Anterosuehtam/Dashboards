@@ -1,0 +1,19 @@
+[theme]
+# Cor Primária (Laranja)
+primaryColor="#FF7A00"
+
+# Cor de Fundo Principal (Branco)
+backgroundColor="#FFFFFF"
+
+# Cor de Fundo Secundária (Filtros, Widgets - F0F2F6)
+secondaryBackgroundColor="#F0F2F6" 
+# Nota: O seu CSS usa #F9FAFB, o que está na imagem é #F0F2F6. Mantenha #F0F2F6 
+# aqui se quiser usar o valor da imagem, ou use #F9FAFB para consistência com o seu CSS.
+
+# Cor do Texto (Escuro)
+textColor="#31333F"
+
+# Família de Fontes
+font="sans serif"
+# Nota: Você já está usando Poppins/Inter via CSS, mas Streamlit 
+# ainda exige esta definição base. Use "sans serif" para manter a base.
