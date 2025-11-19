@@ -1,4 +1,4 @@
-# --- IMPORTAÇÕES INICIAIS ---
+# --- IMPORTAÇÕES ---
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -16,6 +16,7 @@ from sklearn.metrics import r2_score, mean_absolute_error
 
 # --- NOVAS IMPORTAÇÕES (BANCO DE DADOS) ---
 from sqlalchemy import create_engine
+import time
 # --- CONEXÃO COM O BANCO DE DADOS ---
 @st.cache_resource
 def conectar_mysql():
@@ -49,7 +50,6 @@ def carregar_todas_tabelas(_engine):
         return {}
 engine = conectar_mysql()
 dados = carregar_todas_tabelas(engine)
-
 
 # ===========================================================
 # 🎨 FUNÇÃO DE CSS CUSTOMIZADO (UI KIT CANNOLI)
@@ -200,87 +200,278 @@ st.set_page_config(
 load_custom_css()
 
 # ===========================================================
-# 🔐 LOGIN / AUTENTICAÇÃO (via cadastro.csv)
+# 🔐 LOGIN / AUTENTICAÇÃO (via banco de dados)
 # ===========================================================
 def hash_pwd(password: str) -> str:
     return hashlib.sha256(str(password).encode("utf-8")).hexdigest()
 
 @st.cache_data
-def load_cadastro(path: str = "data/cadastro.csv") -> pd.DataFrame:
+def load_cadastro(_engine) -> pd.DataFrame:
+    """
+    Carrega os dados de cadastro da tabela 'Cadastro' do banco de dados,
+    lendo diretamente a coluna segura 'password_hash'.
+    """
     try:
-        cad = pd.read_csv(path, sep=",", encoding="utf-8")
-    except UnicodeDecodeError:
-        cad = pd.read_csv(path, sep=",", encoding="latin-1")
+        # 1. Carrega APENAS as colunas necessárias, incluindo 'password_hash'
+        query = "SELECT id_restaurante, nome_restaurante, login, password_hash, role FROM Cadastro;"
+        cad = pd.read_sql(query, engine)
+    except Exception as e:
+        # Se a tabela não existir, retorna um DataFrame vazio para não quebrar o app
+        st.warning(f"Tabela 'Cadastro' não encontrada ou erro de leitura: {e}. Criando DataFrame vazio.")
+        # Define as colunas esperadas para evitar erros no código a seguir
+        cols = ["id_restaurante", "nome_restaurante", "login", "senha", "role"] 
+        cad = pd.DataFrame(columns=cols) 
+
     rename_map = {
         "id_restaurate": "id_restaurante",
         "nome_restarante": "nome_restaurante",
         "usuario": "login",
-        "password": "senha"
     }
+    # Mantém o código de renomeação de colunas por segurança
     cad.rename(columns={k: v for k, v in rename_map.items()
-                      if k in cad.columns}, inplace=True)
+                         if k in cad.columns}, inplace=True)
+    
+    if 'password_hash' not in cad.columns:
+        # Garante que a coluna exista, se o SELECT falhou por algum motivo
+        cad["password_hash"] = "" 
+
+    # Processamento de tipos e hash da senha (mantido)
     if "id_restaurante" in cad.columns:
         cad["id_restaurante"] = pd.to_numeric(
             cad["id_restaurante"], errors="coerce").astype("Int64")
-    cad["password_hash"] = cad["senha"].astype(str).apply(hash_pwd)
-    cad["role"] = cad["role"].astype(
-        str).str.strip().str.lower()
+    
+    # A coluna 'password_hash' agora contém o hash lido do BD. 
+    # O bloco antigo de re-cálculo de hash foi totalmente removido.
+    
+    cad["role"] = cad.get("role", pd.Series(dtype="object")).astype(
+        str).str.strip().str.lower().fillna('restaurante')
     cad["nome_restaurante"] = cad.get(
         "nome_restaurante", pd.Series(dtype="object")).astype(str)
+        
     return cad
 
-cadastro = load_cadastro()
-ID_TO_NAME = cadastro.set_index("id_restaurante")["nome_restaurante"].to_dict()
+# --- ATUALIZAÇÃO DA VARIÁVEL GLOBAL ---
+# engine já foi definido no código original
+# dados globais do Cadastro agora usam a engine
+Cadastro = load_cadastro(engine)
+# O restante do código de mapeamento continua o mesmo
+ID_TO_NAME = Cadastro.set_index("id_restaurante")["nome_restaurante"].to_dict()
 NAME_TO_ID = {v: k for k, v in ID_TO_NAME.items()}
+
+# --- FUNÇÃO DE AUTENTICAÇÃO PRINCIPAL ---
+def authenticate(username: str, password: str) -> tuple[bool, dict | str, int | None]:
+    """
+    Verifica as credenciais do usuário contra os dados carregados do banco.
+    """
+    global Cadastro # Usa o DataFrame 'Cadastro' que foi carregado globalmente
+    
+    # 1. Encontra o usuário
+    user_row = Cadastro[Cadastro['login'] == username.strip().lower()]
+    
+    if user_row.empty:
+        return False, "Usuário ou senha incorretos.", None
+    
+    # 2. Verifica a senha
+    # A coluna 'senha' no seu DataFrame 'Cadastro' já contém o hash (criado em load_cadastro)
+    stored_hash = user_row['password_hash'].iloc[0] 
+    input_hash = hash_pwd(password) # Gera o hash da senha de entrada
+    
+    if input_hash == stored_hash:
+        # Sucesso! Retorna True, o dict com as informações do usuário e o ID
+        user_info = user_row.iloc[0].to_dict()
+        user_id = user_info['id_restaurante']
+        return True, user_info, user_id
+    else:
+        return False, "Usuário ou senha incorretos.", None
+
+# --- FUNÇÃO DE INTERFACE DE LOGIN ---
+def login_form():
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.title("Acesso Restrito")
+        st.markdown("Entre com suas credenciais para acessar o Dashboard.")
+
+        with st.form("login_form"):
+            username = st.text_input("Nome de Usuário")
+            password = st.text_input("Senha", type="password")
+            
+            submit_button = st.form_submit_button("Entrar")
+            
+            if submit_button:
+                success, result, user_id = authenticate(username, password)
+                
+                if success:
+                    # Armazena as informações na sessão
+                    st.session_state.logged_in = True
+                    st.session_state.user = result
+                    st.session_state.user_id = user_id
+                    st.session_state.username = result['nome_restaurante']
+                    
+                    st.success(f"Bem-vindo(a), {st.session_state.username}!")
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    # Exibe a mensagem de erro (que está em 'result')
+                    st.error(result)
+
+# --- FUNÇÃO DE CADASTRO NO BANCO ---
+def registrar_restaurante(engine, nome_restaurante: str, username: str, password: str, role: str):
+    """
+    Insere um novo registro na tabela 'Cadastro' do banco de dados.
+    """
+    if not nome_restaurante or not username or not password or not role:
+        return False, "Todos os campos obrigatórios precisam ser preenchidos."
+    
+    # 1. Checar se o usuário já existe
+    query_check = f"SELECT login FROM Cadastro WHERE login = '{username}'"
+    try:
+        existing_user = pd.read_sql(query_check, engine)
+        if not existing_user.empty:
+            return False, "O nome de usuário já está em uso."
+    except Exception as e:
+        # Se a tabela não existir, ela será criada na próxima etapa, então apenas ignora o erro
+        pass 
+
+    # 2. Gerar o hash da senha
+    password_hash = hash_pwd(password)
+    
+    # 3. Preparar os dados para inserção (usando o hash da senha)
+    # ATENÇÃO: Se sua tabela 'Cadastro' tem uma coluna para o hash
+    # e outra para a senha em texto plano, ajuste este dicionário.
+    # Assumindo que você substituiu a coluna 'senha' pelo hash para segurança:
+    new_user_data = {
+        'nome_restaurante': nome_restaurante,
+        'login': username,
+        'senha': password_hash, # Armazenando o hash na coluna 'senha' do BD
+        'role': role
+    }
+    
+    # 4. Encontrar o próximo id_restaurante (Simulação de auto-incremento se não for automático)
+    # Se sua tabela for auto_increment, você pode pular isso e inserir NULL, mas para 
+    # compatibilidade com o CSV anterior, simulamos o ID
+    try:
+        last_id = pd.read_sql("SELECT MAX(id_restaurante) FROM Cadastro;", engine).iloc[0, 0]
+        next_id = int(last_id) + 1 if last_id is not None else 1
+    except:
+        next_id = 1
+        
+    if role.lower() == 'restaurante':
+        new_user_data['id_restaurante'] = next_id
+    else: # Admin ou outra role não associada a um restaurante
+        new_user_data['id_restaurante'] = None
+
+    # 5. Converter para DataFrame para usar o to_sql
+    df_new_user = pd.DataFrame([new_user_data])
+    
+    try:
+        df_new_user.to_sql(
+            'cadastro_usuarios', 
+            con=engine, 
+            if_exists='append', 
+            index=False,
+            # Se a tabela não existir, o to_sql tentará criá-la.
+            # Se 'id_restaurante' for a chave primária auto-incremento, ajuste o que é enviado
+        )
+        # Invalida o cache para recarregar a lista de usuários
+        st.cache_data.clear() 
+        return True, "Restaurante cadastrado com sucesso!"
+    except Exception as e:
+        return False, f"Erro ao inserir no banco de dados: {e}"
+
+# --- FUNÇÃO DE INTERFACE DE CADASTRO ---
+def formulario_registro(engine):
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.title("Cadastro de Novo Restaurante")
+        st.markdown("Preencha os dados para criar uma nova conta de restaurante.")
+        
+        with st.form("formulario_registro"):
+            nome_restaurante = st.text_input("Nome do Restaurante", placeholder="Ex: Cannoli Italiano")
+            username = st.text_input("Nome de Usuário (Login)", placeholder="ex: cannoli_admin")
+            password = st.text_input("Senha", type="password")
+            confirm_password = st.text_input("Confirmar Senha", type="password")
+            
+            # Você pode definir um papel padrão (role) para novos cadastros
+            # Deixando o campo hidden ou fixo
+            # role = st.selectbox("Tipo de Conta", options=["restaurant", "admin"])
+            role = "restaurante" # Padrão para cadastros via interface
+            
+            submit = st.form_submit_button("Cadastrar Restaurante")
+            
+            if submit:
+                if password != confirm_password:
+                    st.error("As senhas digitadas não coincidem.")
+                elif not nome_restaurante or not username or not password:
+                    st.error("Por favor, preencha todos os campos.")
+                else:
+                    success, message = registrar_restaurante(
+                        engine, nome_restaurante.strip(), username.strip(), password, role
+                    )
+                    
+                    if success:
+                        st.success(f"✅ Sucesso: {message} Agora você pode fazer o login.")
+                        # Limpa o estado e volta para a tela de login
+                        st.session_state.register_mode = False 
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Erro no Cadastro: {message}")
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user = None
 
-def authenticate(username: str, password: str):
-    row = cadastro.loc[cadastro["login"].astype(str) == str(username)]
-    if row.empty:
-        return False, None
-    row = row.iloc[0]
-    if hash_pwd(password) == row["password_hash"]:
-        user = {
-            "username": username,
-            "role": row["role"],
-            "id_restaurante": None if pd.isna(row.get("id_restaurante")) else int(row.get("id_restaurante")),
-            "nome_restaurante": None if pd.isna(row.get("nome_restaurante")) else str(row.get("nome_restaurante")),
-            "display": str(row.get("nome_restaurante")) if row["role"] == "restaurant" else "Admin"
-        }
-        return True, user
-    return False, None
-
-def login_form():
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
-        # st.image("logo_cannoli.png", use_column_width=True) 
-        st.title("Login de Acesso")
-        with st.form("login_form"):
-            username = st.text_input("Usuário")
-            password = st.text_input("Senha", type="password")
-            submit = st.form_submit_button("Entrar")
-            if submit:
-                ok, user = authenticate(username, password)
-                if ok:
-                    st.session_state.logged_in = True
-                    st.session_state.user = user
-                    st.success(f"✅ Logado como {user['display']}")
-                    st.rerun()
-                else:
-                    st.error("Usuário ou senha incorretos")
-
+# --- FUNÇÃO DE LOGOUT ---
 def logout():
     st.session_state.logged_in = False
     st.session_state.user = None
+    st.session_state.user_id = None
+    st.session_state.username = None
+    st.session_state.register_mode = False # Garante que volta para a tela de login
     st.rerun()
 
-if not st.session_state.logged_in:
-    login_form()
-    st.stop()
+# ===========================================================
+# 🔐 GESTÃO DE ESTADO E FLUXO DE LOGIN/CADASTRO
+# ===========================================================
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.user = None
 
+# Estado para alternar entre Login e Cadastro
+if "register_mode" not in st.session_state:
+    st.session_state.register_mode = False
+
+# --- FUNÇÃO QUE CRIA O FOOTER DE TROCA DE TELA ---
+def toggle_mode_footer():
+    st.markdown("---")
+    if st.session_state.register_mode:
+        # Modo Cadastro -> Link para Login
+        st.markdown("Já tem conta? Clique abaixo para entrar:")
+        
+        if st.button("Voltar para o Login", use_container_width=True, key="back_to_login_btn"):
+            st.session_state.register_mode = False
+            st.rerun()
+    else:
+        # Modo Login -> Link para Cadastro
+        st.markdown("Novo por aqui? Crie sua conta:")
+        
+        if st.button("Quero me Cadastrar", use_container_width=True, key="to_register_btn"):
+            st.session_state.register_mode = True
+            st.rerun()
+
+
+if not st.session_state.logged_in:
+    if st.session_state.register_mode:
+        # Se estiver no modo de cadastro, mostra o formulário de cadastro
+        formulario_registro(engine)
+    else:
+        # Caso contrário, mostra o formulário de login
+        login_form()
+    
+    # Adiciona a opção de alternar entre as telas
+    toggle_mode_footer() 
+    
+    st.stop()
+    
 user = st.session_state.user
 
 # ===========================================================
@@ -332,7 +523,7 @@ df1_sent_subset = df1_sent[['customer_id',
                             'id_restaurante', 'sendAt', 'campaignId']].copy()
 df1_sent_subset.rename(columns={'sendAt': 'sendAt_campaign'}, inplace=True)
 df4_subset = df4_subset.merge(
-    cadastro[['id_restaurante', 'nome_restaurante']],
+    Cadastro[['id_restaurante', 'nome_restaurante']],
     on='id_restaurante',
     how='left'
 )
@@ -351,15 +542,16 @@ df_orders_campaigns['time_diff'] = df_orders_campaigns['createdAt_order'] - \
 # ===========================================================
 # 🔎 FILTROS (Sidebar)
 # ===========================================================
-# st.sidebar.image("logo_cannoli.png", use_column_width=True) 
-st.sidebar.title(f"Painel {user['display']}")
-st.sidebar.markdown(f"Conectado como: **{user['username']}** ({user['role']})")
+# Usamos .get() para evitar erros se o campo estiver vazio, padronizando para 'Admin' ou o login
+display_name = user.get('nome_restaurante') or user.get('login')
+st.sidebar.title(f"Painel {display_name}")
+st.sidebar.markdown(f"Conectado como: **{user['login']}** ({user['role']})")
 if st.sidebar.button("Sair"):
     logout()
 st.sidebar.markdown("---")
 
 restaurantes = (
-    cadastro.dropna(subset=['id_restaurante', 'nome_restaurante'])
+    Cadastro.dropna(subset=['id_restaurante', 'nome_restaurante'])
     .sort_values('nome_restaurante')
     ['nome_restaurante'].unique().tolist()
 )
