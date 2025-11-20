@@ -323,58 +323,47 @@ def registrar_restaurante(engine, nome_restaurante: str, username: str, password
         return False, "Todos os campos obrigatórios precisam ser preenchidos."
     
     # 1. Checar se o usuário já existe
-    query_check = f"SELECT login FROM Cadastro WHERE login = '{username}'"
     try:
+        query_check = f"SELECT login FROM Cadastro WHERE login = '{username}'"
         existing_user = pd.read_sql(query_check, engine)
         if not existing_user.empty:
             return False, "O nome de usuário já está em uso."
     except Exception as e:
-        # Se a tabela não existir, ela será criada na próxima etapa, então apenas ignora o erro
+        # Se a tabela não existir ou der erro de conexão, o insert abaixo vai falhar e avisar
         pass 
 
     # 2. Gerar o hash da senha
-    password_hash = hash_pwd(password)
+    password_hash_val = hash_pwd(password)
     
-    # 3. Preparar os dados para inserção (usando o hash da senha)
-    # ATENÇÃO: Se sua tabela 'Cadastro' tem uma coluna para o hash
-    # e outra para a senha em texto plano, ajuste este dicionário.
-    # Assumindo que você substituiu a coluna 'senha' pelo hash para segurança:
+    # 3. Preparar os dados para inserção
     new_user_data = {
         'nome_restaurante': nome_restaurante,
         'login': username,
-        'senha': password_hash, # Armazenando o hash na coluna 'senha' do BD
+        
+        # AQUI: Usando o nome correto da coluna que você confirmou
+        'password_hash': password_hash_val, 
+        
         'role': role
     }
     
-    # 4. Encontrar o próximo id_restaurante (Simulação de auto-incremento se não for automático)
-    # Se sua tabela for auto_increment, você pode pular isso e inserir NULL, mas para 
-    # compatibilidade com o CSV anterior, simulamos o ID
-    try:
-        last_id = pd.read_sql("SELECT MAX(id_restaurante) FROM Cadastro;", engine).iloc[0, 0]
-        next_id = int(last_id) + 1 if last_id is not None else 1
-    except:
-        next_id = 1
-        
-    if role.lower() == 'restaurante':
-        new_user_data['id_restaurante'] = next_id
-    else: # Admin ou outra role não associada a um restaurante
-        new_user_data['id_restaurante'] = None
+    # NOTA: Não enviamos 'id_restaurante'. 
+    # O MySQL agora vai gerar o próximo número automaticamente (ex: se o último era 10, o novo será 11).
 
-    # 5. Converter para DataFrame para usar o to_sql
-    df_new_user = pd.DataFrame([new_user_data])
-    
+    # 4. Inserir no Banco
     try:
+        df_new_user = pd.DataFrame([new_user_data])
+        
         df_new_user.to_sql(
-            'cadastro_usuarios', 
+            'Cadastro', 
             con=engine, 
             if_exists='append', 
-            index=False,
-            # Se a tabela não existir, o to_sql tentará criá-la.
-            # Se 'id_restaurante' for a chave primária auto-incremento, ajuste o que é enviado
+            index=False
         )
-        # Invalida o cache para recarregar a lista de usuários
+        
+        # Limpa o cache para que o novo usuário seja reconhecido no Login imediatamente
         st.cache_data.clear() 
         return True, "Restaurante cadastrado com sucesso!"
+        
     except Exception as e:
         return False, f"Erro ao inserir no banco de dados: {e}"
 
@@ -477,17 +466,27 @@ user = st.session_state.user
 # ===========================================================
 # 📊 DADOS (Carregamento principal)
 # ===========================================================
-@st.cache_data
+@st.cache_data(ttl=600)
 def load_data():
-    CQ_PATH = 'data/CampaignQueue_semicolon.csv'
-    CAMPAIGN_PATH = 'data/Campaign_semicolon.csv'
-    CUSTOMER_PATH = 'data/Customer_semicolon.csv'
-    ORDER_PATH = 'data/Order_semicolon.csv'
-    df1 = pd.read_csv(CQ_PATH, sep=';', encoding='latin-1')
-    df2 = pd.read_csv(CAMPAIGN_PATH, sep=';', encoding='latin-1')
-    df3 = pd.read_csv(CUSTOMER_PATH, sep=';', encoding='latin-1')
-    df4 = pd.read_csv(ORDER_PATH, sep=';', encoding='latin-1')
-    return df1, df2, df3, df4
+    # Mapeamento direto das suas tabelas do Print para os DataFrames do código
+    try:
+        # df1 = FilaCampanhas (Antigo CampaignQueue)
+        df1 = pd.read_sql("SELECT * FROM FilaCampanhas", engine)
+        
+        # df2 = Campanhas (Antigo Campaign)
+        df2 = pd.read_sql("SELECT * FROM Campanhas", engine)
+        
+        # df3 = Clientes (Antigo Customer)
+        df3 = pd.read_sql("SELECT * FROM Clientes", engine)
+        
+        # df4 = Pedidos (Antigo Order)
+        df4 = pd.read_sql("SELECT * FROM Pedidos", engine)
+        
+        return df1, df2, df3, df4
+        
+    except Exception as e:
+        st.error(f"Erro ao carregar dados do banco: {e}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 df1, df2, df3, df4 = load_data()
 
@@ -766,19 +765,31 @@ def gerar_estrategia_ia(resultados_ml, nome_restaurante):
         return f"Erro ao gerar estratégia: {e}. Verifique se há dados suficientes."
 
 @st.cache_data
-def get_ml_forecast(_all_orders_data, _all_cq_data, restaurant_id, freq):
-    orders_ml_input = _all_orders_data[_all_orders_data['id_restaurante'] == restaurant_id].copy()
-    cq_ml_input = _all_cq_data[_all_cq_data['id_restaurante'] == restaurant_id].copy()
+def get_ml_forecast(_all_orders_data, _all_cq_data, id_restaurante, nome_restaurante, freq):
+    # 1. Filtra os dados usando o ID (que é único e seguro)
+    orders_ml_input = _all_orders_data[_all_orders_data['id_restaurante'] == id_restaurante].copy()
+    cq_ml_input = _all_cq_data[_all_cq_data['id_restaurante'] == id_restaurante].copy()
+    
+    # 2. Verifica se a tabela de pedidos está vazia
+    # Se estiver, mostra o erro usando o NOME do restaurante (mais amigável)
     if orders_ml_input.empty:
-        raise ValueError(f"Não há dados de 'Pedidos' (Orders) para o restaurante ID {restaurant_id} para treinar o modelo.")
+        raise ValueError(f"Ainda não há histórico de 'Pedidos' para o restaurante **{nome_restaurante}** para gerar previsões.")
+    
+    # 3. Define configurações de tempo (Semanal ou Mensal)
     if freq == 'W':
         test_last, horizon = TEST_WEEKS, FORECAST_WEEKS
     else:
         test_last, horizon = TEST_MONTHS, FORECAST_MONTHS
+        
+    # 4. Cria as séries temporais
     serie = make_series(orders_ml_input, freq)
     camps = camps_by_period(cq_ml_input, freq)
+    
+    # 5. Verifica se há histórico suficiente (tempo) para treinar a IA
     if serie.empty or len(serie) < (test_last + 2):
-         raise ValueError(f"Dados insuficientes (poucas semanas/meses com vendas) para o restaurante ID {restaurant_id} após a agregação.")
+         raise ValueError(f"Dados insuficientes de **{nome_restaurante}** (poucas semanas/meses de vendas) para criar uma projeção confiável.")
+         
+    # 6. Roda o modelo matemático
     results = fit_eval_forecast(serie, camps, test_last, horizon, freq)
     return results
 
@@ -999,7 +1010,7 @@ with tab2:
     with sub_tab_mensal:
         try:
             with st.expander("🤖 Previsão Mensal", expanded=True):
-                res_m = get_ml_forecast(df4, df1, id_restaurante_selecionado, 'M')
+                res_m = get_ml_forecast(df4, df1, id_restaurante_selecionado, restaurante_selecionado, 'M')
                 fig_m = plot_line(res_m,
                                   f'Mensal – Vendas Reais x Previstas ({restaurante_selecionado})',
                                   'M')
@@ -1025,7 +1036,7 @@ with tab2:
     with sub_tab_semanal:
         try:
             with st.expander("🤖 Previsão Semanal", expanded=True):
-                res_w = get_ml_forecast(df4, df1, id_restaurante_selecionado, 'W')
+                res_w = get_ml_forecast(df4, df1, id_restaurante_selecionado, restaurante_selecionado, 'W')
                 fig_w = plot_line(res_w,
                                   f'Semanal – Vendas Reais x Previstas ({restaurante_selecionado})',
                                   'W')
@@ -1054,7 +1065,7 @@ with tab3:
     
     with st.expander("🧠 Estratégia Baseada na Projeção Mensal", expanded=True):
         try:
-            res_m = get_ml_forecast(df4, df1, id_restaurante_selecionado, 'M')
+            res_m = get_ml_forecast(df4, df1, id_restaurante_selecionado, restaurante_selecionado, 'M')
             estrategia_texto_m = gerar_estrategia_ia(res_m, restaurante_selecionado)
             st.markdown(estrategia_texto_m)
         except Exception as e:
@@ -1062,7 +1073,7 @@ with tab3:
 
     with st.expander("🧠 Estratégia Baseada na Projeção Semanal", expanded=True):
         try:
-            res_w = get_ml_forecast(df4, df1, id_restaurante_selecionado, 'W')
+            res_w = get_ml_forecast(df4, df1, id_restaurante_selecionado, restaurante_selecionado, 'W')
             estrategia_texto_w = gerar_estrategia_ia(res_w, restaurante_selecionado)
             st.markdown(estrategia_texto_w)
         except Exception as e:
