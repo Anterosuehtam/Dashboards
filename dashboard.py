@@ -432,22 +432,32 @@ if "register_mode" not in st.session_state:
 # --- FUNÇÃO QUE CRIA O FOOTER DE TROCA DE TELA ---
 def toggle_mode_footer():
     st.markdown("---")
-    if st.session_state.register_mode:
-        # Modo Cadastro -> Link para Login
-        st.markdown("Já tem conta? Clique abaixo para entrar:")
-        
-        if st.button("Voltar para o Login", use_container_width=True, key="back_to_login_btn"):
-            st.session_state.register_mode = False
-            st.rerun()
-    else:
-        # Modo Login -> Link para Cadastro
-        st.markdown("Novo por aqui? Crie sua conta:")
-        
-        if st.button("Quero me Cadastrar", use_container_width=True, key="to_register_btn"):
-            st.session_state.register_mode = True
-            st.rerun()
+    col_esq, col_meio, col_dir = st.columns([1, 0.8, 1])
 
-
+    with col_meio:
+        if st.session_state.register_mode:
+            # Texto centralizado usando HTML simples
+            st.markdown(
+                "<div style='text-align: center; margin-bottom: 10px;'>Restaurante cadastrado? Realize o login:</div>", 
+                unsafe_allow_html=True
+            )
+            
+            # O botão preenche a largura da coluna do meio (que já é estreita/centralizada)
+            if st.button("Voltar para o Login", use_container_width=True, key="back_to_login_btn"):
+                st.session_state.register_mode = False
+                st.rerun()
+        else:
+            # Texto centralizado
+            st.markdown(
+                "<div style='text-align: center; margin-bottom: 10px;'>Novo por aqui? Crie sua conta:</div>", 
+                unsafe_allow_html=True
+            )
+            
+            # Botão centralizado
+            if st.button("Cadastre-se", use_container_width=True, key="to_register_btn"):
+                st.session_state.register_mode = True
+                st.rerun()
+                
 if not st.session_state.logged_in:
     if st.session_state.register_mode:
         # Se estiver no modo de cadastro, mostra o formulário de cadastro
@@ -849,13 +859,15 @@ with tab1:
     impact['canal_display'] = impact['salesChannel'].map(channel_rename_map).fillna(impact['salesChannel'])
 
     CORES_PROFISSIONAIS = {
-        'IFOOD': '#EA1D2C',
-        '99FOOD': '#FFC700',
-        'WhatsApp': '#25D366',
-        'SITE': '#FF7A00',         
-        'EPIDOCA': '#808080',   
+        'IFOOD': '#EA1D2C',       # Vermelho iFood
+        '99FOOD': '#FFC700',      # Amarelo 99
+        'WhatsApp': '#25D366',    # Verde Zap
+        'SITE': '#FF7A00',        # Laranja Cannoli
+        'EPIDOCA': '#808080',     # Cinza
+        'ANOTAAI': '#0057FF',     # Azul vibrante
         'App de Delivery': '#242551',
-        'DELIVERYVP': '#242551'
+        'DELIVERYVP': '#242551',
+        'Outros': '#555555'
     }
     
     # --- MÉTRICAS (VISÃO GERAL) ---
@@ -887,7 +899,7 @@ with tab1:
             color='canal_display',
             barmode='group',
             title='Total de Pedidos por Campanha', 
-            text='total_pedidos',
+            # Note que NÃO tem a linha text='total_pedidos' aqui
             color_discrete_map=CORES_PROFISSIONAIS 
         )
         fig_pedidos.update_layout(
@@ -896,16 +908,14 @@ with tab1:
             font_color='#1E293B', 
             xaxis_title='Campanha',
             yaxis_title='Total de Pedidos',
-            title_x=0.5, 
+            title_x=0.42, 
             legend_title_text='Canal',
             font=dict(family="Inter, sans-serif", size=12),
             yaxis=dict(showgrid=True, gridcolor='lightgray')
         )
+        # Forçamos 'none' para garantir que nada apareça
         fig_pedidos.update_traces(
-            texttemplate='%{y}',
-            textposition='outside',
-            textfont_color='#1E293B',
-            textfont_size=11,
+            textposition='none', 
             marker_line_width=0
         )
         st.plotly_chart(fig_pedidos, use_container_width=True)
@@ -919,7 +929,7 @@ with tab1:
             color='canal_display',
             barmode='group',
             title='Valor Total de Vendas por Campanha', 
-            text='valor_total_vendas',
+            # Note que NÃO tem a linha text='valor_total_vendas' aqui
             color_discrete_map=CORES_PROFISSIONAIS
         )
         fig_vendas.update_layout(
@@ -928,17 +938,15 @@ with tab1:
             font_color='#1E293B',
             xaxis_title='Campanha',
             yaxis_title='Valor Total (R$)',
-            title_x=0.5, 
+            title_x=0.41, 
             legend_title_text='Canal',
             font=dict(family="Inter, sans-serif", size=12),
             xaxis=dict(showgrid=False),
             yaxis=dict(showgrid=True, gridcolor='lightgray', tickformat='R$ .2s')
         )
+        # Forçamos 'none' para garantir que nada apareça
         fig_vendas.update_traces(
-            texttemplate='R$ %{y:,.2f}', 
-            textposition='outside',
-            textfont_color='#1E293B',
-            textfont_size=11,
+            textposition='none',
             marker_line_width=0
         )
         st.plotly_chart(fig_vendas, use_container_width=True)
@@ -951,19 +959,21 @@ with tab1:
             names='canal_display',
             values='valor_total_vendas',
             title='Participação dos Canais nas Vendas',
-            color_discrete_map=CORES_PROFISSIONAIS 
+            color='canal_display',  
+            color_discrete_map=CORES_PROFISSIONAIS
         )
+        
         fig_pizza.update_layout(
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)', 
             font_color='#1E293B',
-            title_x=0.5, 
+            title_x=0.41, 
             showlegend=True,
             legend_title_text='Canal',
             font=dict(family="Inter, sans-serif", size=12)
         )
         fig_pizza.update_traces(
-            textinfo='percent+value', 
+            textinfo='percent', 
             hovertemplate='%{label}<br>Valor: R$ %{value:,.2f}<br>Participação: %{percent}<extra></extra>',
             marker=dict(line=dict(color='#FFFFFF', width=1))
         )
@@ -972,33 +982,53 @@ with tab1:
         st.markdown("---")
 
         # === GRÁFICO 4: RANKING HORIZONTAL ===
-        impact_rank = impact.sort_values(by='valor_total_vendas', ascending=True)
+        df_totais = impact.groupby('campaignName', as_index=False)['valor_total_vendas'].sum()
+        df_totais = df_totais.sort_values('valor_total_vendas', ascending=True)
+        
         fig_rank = px.bar(
-            impact_rank, y='campaignName',
+            impact, 
+            y='campaignName',
             x='valor_total_vendas', 
             color='canal_display',
             orientation='h',
-            text='valor_total_vendas', title='Ranking de Campanhas por Valor Total de Vendas',
-            color_discrete_map=CORES_PROFISSIONAIS
+            title='Ranking de Campanhas por Valor Total de Vendas',
+            color_discrete_map=CORES_PROFISSIONAIS,
+            category_orders={'campaignName': df_totais['campaignName'].tolist()}
         )
+        
         fig_rank.update_layout(
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)', 
             font_color='#1E293B',
-            xaxis_title='Valor Total de Vendas (R$)', yaxis_title='Campanha',
-            title_x=0.5, 
+            xaxis_title='Valor Total de Vendas (R$)', 
+            yaxis_title='Campanha',
+            title_x=0.41, 
             legend_title_text='Canal',
             font=dict(family="Inter, sans-serif", size=12),
             xaxis=dict(showgrid=True, gridcolor='lightgray', tickformat='R$ .2s'), 
-            yaxis=dict(showgrid=False)
+            yaxis=dict(showgrid=False),
+            margin=dict(r=120) 
         )
-        fig_rank.update_traces(
-            texttemplate='R$ %{x:,.2f}', 
-            textposition='outside',
-            textfont_color='#1E293B',
-            textfont_size=11,
-            marker_line_width=0
-        )
+        
+        # 3. Adiciona o VALOR TOTAL (Texto Normal)
+        for i, row in df_totais.iterrows():
+            valor_fmt = f"R$ {row['valor_total_vendas']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            
+            fig_rank.add_annotation(
+                x=row['valor_total_vendas'], 
+                y=row['campaignName'],       
+                
+                # --- AQUI MUDOU: Tiramos o <b> e </b> ---
+                text=valor_fmt,  
+                
+                showarrow=False,
+                xanchor='left',              
+                xshift=8,                    
+                font=dict(color='#1E293B', size=11)
+            )
+            
+        fig_rank.update_traces(marker_line_width=0)
+        
         st.plotly_chart(fig_rank, use_container_width=True)
 
 # --- CONTEÚDO DA ABA 2: PREVISÃO (ML) ---
