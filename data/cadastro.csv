@@ -1,5 +1,5 @@
 "id_restaurante","nome_restaurante","login","senha","role"
-"0","","admin","admin123","admin"
+"999","","admin","admin123","admin"
 "1","A Casa da Massa","acasadamassa","massa123","restaurante"
 "2","A Confeitaria","aconfeitaria","doce123","restaurante"
 "3","Aroma da Cidade","aromadacidade","aroma123","restaurante"
