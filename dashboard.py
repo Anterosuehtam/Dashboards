@@ -476,7 +476,7 @@ user = st.session_state.user
 # ===========================================================
 # 📊 DADOS (Carregamento principal)
 # ===========================================================
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_data():
     # Mapeamento direto das suas tabelas do Print para os DataFrames do código
     try:
@@ -498,7 +498,8 @@ def load_data():
         st.error(f"Erro ao carregar dados do banco: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-df1, df2, df3, df4 = load_data()
+with st.spinner('Acessando base de dados... Por favor, aguarde.'):
+    df1, df2, df3, df4 = load_data()
 
 def to_dt(df, cols):
     for c in cols:
@@ -944,7 +945,6 @@ with tab1:
             xaxis=dict(showgrid=False),
             yaxis=dict(showgrid=True, gridcolor='lightgray', tickformat='R$ .2s')
         )
-        # Forçamos 'none' para garantir que nada apareça
         fig_vendas.update_traces(
             textposition='none',
             marker_line_width=0
